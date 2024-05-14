@@ -1,0 +1,74 @@
+---
+title: "An Example Storyboard"
+subtitle: 
+output: 
+  flexdashboard::flex_dashboard:
+    storyboard: true
+
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(knitr)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+```
+
+### First Page
+
+
+```{r}
+n<- 100
+df <- data_frame( x = runif(n), y = rnorm(n, 3*x+2, 2))
+
+df %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point() 
+  
+```
+
+***
+
+Here you see a simple plot
+
+### Page 2
+
+```{r}
+demand_month %>% 
+  ggplot(aes( x = Time, y = demand, colour = city,group=city))+
+  geom_line(aes(size=2,color=city)) +
+  theme_minimal() +
+    labs(
+    x = 'Period (year)',
+    y = 'power demand',
+    colour = 'city'
+  ) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5))
+```
+
+***
+
+Here we show a different plot.
+
+### Page III
+
+```{r}
+n<- 100
+df <- data_frame( x = runif(n), y = rnorm(n, -3*x-2, 2))
+
+df %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point()+
+  geom_smooth()
+
+```
+
+***
+
+Even more plots.
+
+

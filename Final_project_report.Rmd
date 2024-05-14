@@ -1,0 +1,586 @@
+---
+title: "Final Project Report"
+subtitle: 'final report'
+author: "Yangyijun Gao(300262073) & Pratik Jariwala & Prayag Asokan Nandini"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+# Description
+
+Analysis to determine the most cost-effective and environmentally beneficial time of day to use energy, by comparing the relationship between electricity usage, weather, and electricity price in Ottawa, Toronto, and Niagara Falls.  
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(knitr)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+library(readxl)
+library(janitor)
+library(ggplot2)
+library(ggrepel)
+library(readr)
+library(scales)
+library(patchwork)
+library(tibble)
+library(tictoc)
+library(benford.analysis)
+library(data.table) 
+library(ggtrendline)
+```
+
+# Electricity supply and consumption change over time in three cities (Year) part I
+
+``` {r echo=FALSE, fig.height=8, fig.width=16, warning=FALSE}
+getDemond <- function(filename){
+  temp <- read_csv(filename,skip = 3, col_names = TRUE,show_col_types = FALSE) %>%
+  clean_names()
+  return(temp)
+}
+
+demand_data <- tibble()
+for (i in 2019:2023)
+{
+filename = paste("PUB_DemandZonal_",i,".csv",sep = "")
+demand_data <- demand_data %>% bind_rows(getDemond(filename) %>% select(date,hour,ottawa,toronto,niagara)) %>%
+  mutate(month_year = format(as.Date(date), "%Y-%m"))
+}
+demand_month <- demand_data %>% select(-date,-hour) %>%
+  pivot_longer(
+    -month_year,
+    names_to = "city", 
+    values_to = "volumn"
+    )
+
+
+demand_month <- aggregate(demand_month$volumn, by=list(demand_month$month_year,demand_month$city),sum) %>% 
+ rename(Time=Group.1,city=Group.2,demand = x) 
+
+pop_info <- read_excel("pop_info.xlsx") %>%
+  clean_names() %>%
+  mutate(month_year = format(time, "%Y-%m"))
+
+plot1 <- demand_month %>% mutate(season=case_when(str_sub(Time,-2) %in% c("03","04","05") ~ "Spring",
+                                         str_sub(Time,-2) %in% c("06","07","08") ~ "Summer",
+                                         str_sub(Time,-2) %in% c("09","10","11") ~ "Autumn",
+                                         str_sub(Time,-2) %in% c("12","01","02") ~ "Winter",
+                        TRUE ~ "OTHER")) %>%
+  filter(Time!='2023-03') %>%
+  ggplot(aes( x = Time, y = demand, colour = city))+
+  geom_line(aes(size=2,color=city,group=city),show.legend = FALSE) +
+  theme_minimal() +
+  geom_label_repel(aes(label = season),size=3) +
+    labs(
+    x = 'Period (year)',
+    y = 'power demand(MW)',
+    colour = 'city'
+  ) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5))
+plot2 <- demand_month %>% left_join(pop_info,by=c("Time"="month_year","city")) %>%
+  ggplot(aes( x = city, y = demand/pop, colour = city))+
+  geom_boxplot(aes(color=city,group=city),show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5)) +
+    labs(
+    x = 'City',
+    y = 'demand per people(MW/ppr)',
+    colour = 'city'
+  )
+
+plot1+plot2
+```
+
+Almost all the peak demand happen in winter and summer. 
+Toronto uses significantly more electricity than other cities, and more volatile
+Overall, Toronto's peak electricity demand has a certain downward trend over the years, Ottawa and Niagara are relatively stable.
+In contrast, Ottawa has the lowest electricity demand per capita, Niagara the highest, and Toronto is in the middle. Ottawa is the most efficient in terms of electricity demand
+
+# Electricity supply and consumption change over time in three cities (Year) part II
+
+```{r echo=FALSE, fig.height=6, fig.width=10, warning=FALSE}
+
+getCapacity <- function(filename){
+  test <- read.table(filename,skip = 3, header=TRUE,sep=",",row.names = NULL) %>%
+  clean_names() 
+  colnames(test) <- colnames(test)[2:ncol(test)] #cite 2
+  test <- test[1:(ncol(test)-1)] %>%
+  filter(measurement=="Output") %>%
+  select(-generator,-fuel_type,-measurement) %>%
+  mutate(month_year = format(as.Date(delivery_date), "%Y-%m")) %>%
+  replace(is.na(.), 0) %>%
+  pivot_longer(
+    cols= starts_with("Hour"),
+    names_to = "hours", 
+    values_to = "volumn"
+    )
+  #test <- aggregate(test$volumn, by=list(test$month_year,test$hours),sum) %>% 
+  #rename(Time=Group.1,hour=Group.2,capacity = x)
+  return(test)
+}
+
+capa_data <- tibble()
+clist <- c("01","02","03","04","05","06","07","08","09","10","11","12")
+
+for (i in 2019:2023)
+{
+  for(j in clist)
+{
+filename = paste("PUB_GenOutputCapabilityMonth_",i,j,".csv",sep = "")
+if (file.exists(filename))
+capa_data <- capa_data %>% bind_rows(getCapacity(filename))
+}
+}
+
+capa_data_old <- read_excel("GOC-2019-Jan-April.xlsx",col_names = TRUE) %>%
+  clean_names() %>%
+  select(date,hour,total) %>%
+  mutate(month_year = format(as.Date(date), "%Y-%m")) %>%
+  mutate(hours = paste("hour_",hour,sep="")) %>%
+  mutate(dates = as.character(date)) %>%
+  select (dates,month_year,hours,total) %>%
+  rename(volumn=total,delivery_date=dates)
+
+#capa_data_old <- aggregate(capa_data_old$total, by=list(capa_data_old$month_year,capa_data_old$hours),sum) %>%
+#rename(Time=Group.1,hour=Group.2,capacity = x)
+
+capa_data <- capa_data %>% bind_rows(capa_data_old)
+
+
+
+capa_data_month <- capa_data %>%
+  select(month_year,hours,volumn) %>%
+  #aggregate(capa_data$volumn, by=list(capa_data$month_year,capa_data$hours),sum) %>% 
+  group_by(month_year,hours) %>%
+  summarise(capacity = sum(volumn)) %>%
+  rename(Time=month_year,hour=hours)
+
+capa_month <- capa_data_month %>% select(Time,capacity) %>% 
+  group_by(Time) %>% 
+  summarise(volumn=sum(capacity),.groups = 'drop')
+
+capa_color<-"#69b3a2"
+capa_month %>% 
+  filter(Time!='2023-03') %>%
+ggplot(aes( x = Time, y = volumn))+
+  geom_point() +
+  geom_line(aes(size=2,group=1,colour="Output"))+
+  scale_color_manual(values = c(capa_color))+
+  theme_minimal() +
+    labs(
+    x = 'Period (year)',
+    y = 'power output(MW)'
+  ) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5))
+```
+
+power output generation and demand are similar, with peaks occurring in summer and winter
+
+# Electricity supply and consumption change over time in three cities (Year) part III
+
+```{r echo=FALSE, fig.height=6, fig.width=10, warning=FALSE}
+demand_month2 <- demand_month %>%
+  select(Time,demand) %>%
+  group_by(Time) %>%
+  summarise(volumn=sum(demand),.groups = 'drop')
+
+df1 <- demand_month2 %>% 
+  left_join(capa_month, by = c("Time"="Time")) %>% 
+  rename(demand=volumn.x,capacity=volumn.y)
+
+
+df1 %>% 
+  filter(Time!='2023-03') %>%
+ggplot(aes( x = Time))+
+  geom_line(aes(y=demand,group=1,color="demand(MW)",size=2))+
+  geom_line(aes(y=capacity/2,group=1,color="output(MW)",size=2))+
+  scale_y_continuous(
+    name="demand",
+    sec.axis = sec_axis(trans = ~.*2,name="output")
+  )+
+  labs(x="Period(year)") +
+  scale_color_manual(values = c("darkgreen", "coral3")) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5),
+        axis.title.y = element_text(color = "darkgreen"),
+    axis.title.y.right = element_text(color = "coral3")
+  )
+
+```
+
+If we look at demand and output together, we will find that they always show the same trend.
+
+The only difference occurs in 2022. In this year, the demand in summer is higher than that in winter, but the output is the opposite.
+
+
+# Electricity supply and consumption change over time in three cities (Hour) partI
+
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=10}
+demand_hour <- demand_data %>% select(-month_year,-date) %>%
+  pivot_longer(
+    -hour,
+    names_to = "city", 
+    values_to = "volumn"
+    )
+
+demand_hour <- aggregate(demand_hour$volumn, by=list(demand_hour$hour,demand_hour$city),mean) %>% 
+ rename(Hour=Group.1,city=Group.2,demand = x) %>%
+  mutate(hours=as.character(Hour))
+
+mean <- demand_hour%>% group_by(city)%>%summarise(mean_val=quantile(demand,0.6))
+
+demand_hour %>% 
+  ggplot(aes( x = reorder(hours,Hour),y = demand, colour = city,group=city))+
+  geom_line(aes(color=city)) +
+  geom_point(size=2) +
+  geom_hline(data=mean,aes(yintercept=mean_val,color=city,linetype="60 percentiles of the demand(base load)"))+ #cite 1
+  theme_minimal() +
+    labs(
+    x = 'Period (hour)',
+    y = 'Power demand(MW)',
+    colour = 'city'
+  ) 
+
+```
+
+lowest demand happen on 4am and start increase untill reach the peak which is 6pm. After 6pm, the demand decrease.
+When we look at demand from the perspective of hours, based on the base load(60%), from 10 am to 9 pm, the demand exceeds the base load.
+So if you want to be more environmental friendly, use the electricity before 10am or after 9pm.
+
+# Electricity supply and consumption change over time in three cities (Hour) partII
+
+```{r echo=FALSE, fig.height=6, fig.width=10, warning=FALSE}
+
+
+capa_data_hour <- capa_data %>%
+  group_by(delivery_date,month_year,hours) %>%
+  summarise(capacity=sum(volumn))
+
+
+capa_hour <- capa_data_hour %>% select(hours,capacity) %>%
+  group_by(hours) %>%
+  summarise(mean_val=mean(capacity)) %>%
+  mutate(hour=as.numeric(gsub(".*?([0-9]+).*", "\\1", hours)))
+
+mean_capa <- capa_hour%>% select(mean_val) %>%
+  summarise(mean_capa=quantile(mean_val,0.6))
+
+capa_hour %>% 
+  ggplot(aes( x = reorder(hours,hour),y = mean_val))+
+  geom_line(aes(group=1,colour="Output"))+
+  geom_point()+
+  geom_hline(data=mean_capa,aes(yintercept=mean_capa,color = "60 percentiles of the output"))+ #cite 1
+  scale_color_manual(values = c("blue",capa_color))+
+  geom_point(color=capa_color) +
+  theme_minimal() +
+    labs(
+    x = 'Period (hour)',
+    y = 'Power Output(MW)'
+  ) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5))
+
+
+```
+
+Power output is pretty much the same as demand. lowest output happen on 3am and highest happen on 6pm.
+
+# Electricity supply and consumption change over time in three cities (Hour) partIII
+```{r echo=FALSE, fig.height=6, fig.width=12, warning=FALSE}
+demand_hour2 <- demand_hour %>%
+select (Hour,demand,hours) %>%
+  group_by(hours,Hour) %>%
+  summarise(mean_val=sum(demand))
+df2 <- demand_hour2 %>% left_join(capa_hour,by = c("Hour" = "hour")) %>%
+  rename(demand=mean_val.x,capacity=mean_val.y,Time=hours.x)
+
+df2 %>% select(Time,Hour,demand,capacity) %>%
+ggplot(aes( x = reorder(Time,Hour)))+
+  geom_line(aes(y=demand,group=1,color="demand(MW)",size=2))+
+  geom_line(aes(y=capacity/2,group=1,color="output(MW)",size=2))+
+  scale_y_continuous(
+    name="demand",
+    sec.axis = sec_axis(trans = ~.*2,name="output")
+  )+
+  labs(x="Period(hour)") +
+  scale_color_manual(values = c("darkgreen", "coral3")) +
+  theme(axis.text.x = element_text(angle=0,hjust=0.5, vjust=0.5),
+        axis.title.y = element_text(color = "darkgreen"),
+    axis.title.y.right = element_text(color = "coral3")
+  )
+
+```
+
+If we look at demand and output together, they are almost showing the same trend.
+
+# Electricity supply and consumption change over time in three cities (Hour) partIV
+
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=10}
+
+df2 %>% select(Time,Hour,demand,capacity) %>%
+ggplot(aes(x=demand,y=capacity,size=demand/capacity,color=Hour),alpha=0.8) +
+  geom_point() +
+  stat_smooth(method = glm,level=0.95) +
+  scale_size_continuous(range = c(2, 10)) +
+  geom_label_repel(aes(label = Hour),size=3)
+
+```
+
+method = glm,level=0.95
+we need to prevent using electricity on the hour above the line, which is 6pm to 9pm since for the same demand it need higher capacity which may increase power plant emissions.
+Switch them to the hour below the line may be a good idea.
+
+# Changes in Electricity Rates Over Time (year)
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=10}
+
+getPrice <- function(filename){
+  temp <- read_csv(filename,skip = 3, col_names = TRUE,show_col_types = FALSE) %>%
+  clean_names() %>%
+  select(date,hour,hoep)
+  return(temp)
+}
+
+price_data <- tibble()
+for (i in 2019:2023)
+{
+filename = paste("PUB_PriceHOEPPredispOR_",i,".csv",sep = "")
+price_data <- price_data %>% bind_rows(getPrice(filename)) %>%
+  mutate(month_year = format(as.Date(date), "%Y-%m"))
+}
+
+price_month <- price_data %>%
+  select(month_year,hoep) %>%
+  group_by(month_year) %>%
+  summarise(price = mean(hoep))
+
+price_month %>% 
+  ggplot(aes( x = month_year, y = price))+
+  geom_line(aes(size=2),group=1,color="darkgreen") +
+  theme_minimal() +
+    labs(
+    x = 'Period (year)',
+    y = 'price($ CAD per MWh)'
+  ) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5))
+```
+
+There is a very, very significant increase in electricity prices from summer 2022. The possible reason is that the war in Ukraine has caused global energy problems
+
+# Changes in Electricity Rates Over Time (hour) partI
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=10}
+
+price_hour <- price_data %>%
+  select(hour,hoep) %>%
+  group_by(hour) %>%
+  summarise(price_val=mean(hoep)) %>%
+  mutate(hours=as.character(hour))
+
+price_hour %>% 
+  ggplot(aes( x = reorder(hours,hour), y = price_val))+
+  geom_line(aes(size=2),group=1,color="darkgreen") +
+  theme_minimal() +
+    labs(
+    x = 'Period (hour)',
+    y = 'price($ CAD per MWh)'
+  ) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5))
+
+```
+If we look at the price from an hourly perspective，Two peaks occur at 10 am and 6:00 pm
+The difference from the demand is that the price shows a decline from 10am in the morning to 2pm in the afternoon.
+If you want to be more economical, you can try to use electricity between 10pm and 7am,Especially between 1am and 5am，During this time period, the electricity bill is basically equal to 0.
+
+# Changes in Electricity Rates Over Time (hour) partII
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=10}
+
+df3 <- demand_hour2 %>%
+  left_join(price_hour,by=c("hours"="hours")) %>%
+  select(-hour)
+
+df3 %>%
+  ggplot(aes(x=mean_val,y=price_val,size=price_val,color=Hour),alpha=0.8) +
+  geom_point() +
+  stat_smooth(method = glm,level=0.99) +
+  scale_size_continuous(range = c(2, 10))+
+  labs(
+    x = 'Demand (MW)',
+    y = 'price($ CAD per MWh)'
+  ) +
+  geom_label_repel(aes(label = hours, fontface = "bold"),size=3)
+```
+method:glm, level:0.99 
+
+1am to 6am is the most economical
+It is relatively economical to use electricity between 1pm and 4pm. 
+And 8am to 10am is relatively the least economical
+
+# Temperature changes over time in three cities (year)
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=12}
+
+temp_hour <- tibble()
+cities <- c("6139449","6105978","6158355")
+  
+months <- c("01","02","03","04","05","06","07","08","09","10","11","12")
+for(i in cities)
+{
+for (j in 2019:2023)
+{
+  for(k in months)
+{
+filename = paste("en_climate_hourly_ON_",i,"_",k,"-",j,"_P1H.csv",sep = "")
+if (file.exists(filename))
+{
+  temp <-read_csv(filename,col_names = TRUE,show_col_types = FALSE) %>%
+  clean_names()%>%select(station_name,temp_c,date_time_lst,day,time_lst) %>%
+  mutate(hour=as.numeric(gsub(".?([0-9]+).", "\\1",date_time_lst)))%>%select(-time_lst)%>%mutate(month_year = format(as.Date(date_time_lst), "%Y-%m"))
+  
+  temp_hour <- temp_hour %>% bind_rows(temp)
+}
+}
+}
+}
+
+temp_hour <-temp_hour%>%pivot_wider(names_from = station_name, values_from = temp_c)%>%clean_names()%>%setnames(old = c('welland_pelham','ottawa_cda_rcs','toronto_city'),new = c('Niagara','Ottawa','Toronto'))
+
+temp_month <- temp_hour %>% 
+  select (month_year,Niagara,Ottawa,Toronto) %>% 
+  pivot_longer(-month_year,
+              names_to = "city",
+              values_to = "temp") %>%
+  drop_na() %>%
+  group_by(month_year,city) %>%
+  summarise(mean_temp=mean(temp)) 
+
+temp_month %>% 
+  ggplot(aes( x = month_year, y = mean_temp,group=city,color=city))+
+  geom_line(aes(color=city)) +
+  geom_point()+
+  geom_smooth(method='loess',aes(group=city))+
+  theme_minimal() +
+    labs(
+    x = 'Period (year)',
+    y = 'Average Temperature(˚C)'
+  ) +
+  theme(axis.text.x = element_text(angle=90,hjust=0.5, vjust=0.5))
+```
+Toronto is the warmest and Ottawa is the coldest.
+
+Temperature is similar in summer for those three cities. But for winter, Ottawa is much more colder, maybe it's due to great lake effect.
+
+global warming is not trun for Ontario.
+
+# Temperature changes over time in three cities (hour)
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=10}
+temp_data <- tibble()
+temp_hour<- tibble()
+cities <- c("6139449","6105978","6158355")
+months <- c("01","02","03","04","05","06","07","08","09","10","11","12")
+for(i in cities)
+{
+for (j in 2019:2023)
+{
+  for(k in months)
+{
+filename = paste("en_climate_hourly_ON_",i,"_",k,"-",j,"_P1H.csv",sep = "")
+if (file.exists(filename))
+{
+  temp <-read_csv(filename,col_names = TRUE,show_col_types = FALSE) %>%
+  clean_names()%>%select(station_name,temp_c,date_time_lst,day,time_lst) %>%
+  mutate(hour=as.numeric(gsub(".*?([0-9]+).*", "\\1",time_lst)))%>%select(-time_lst)%>%mutate(month_year = format(as.Date(date_time_lst), "%Y-%m"))
+  
+  temp_data <- temp_data %>% bind_rows(temp)
+
+}
+}
+}
+}
+
+temp_data<-temp_data%>%pivot_wider(names_from = station_name, values_from = temp_c)%>%clean_names()%>%setnames(old = c('welland_pelham','ottawa_cda_rcs','toronto_city'),new = c('niagara','ottawa','toronto'))
+
+
+temp_hour <- temp_data %>%select (hour,niagara,ottawa,toronto) %>% pivot_longer(-hour,names_to = "city",values_to = "temp") %>%drop_na() %>% group_by(hour,city) %>%summarise(mean_temp_hour=mean(temp))#%>%pivot_wider(names_from = city, values_from = mean_temp)
+
+
+ggplot(temp_hour, mapping = aes(x = hour, y = mean_temp_hour, color = city) ) + geom_line()+ 
+  geom_point()+
+  labs(
+    x = 'Period (Hours)',
+    y = 'Temperature(˚C)')
+```
+
+Toronto and Niagara are similar, Ottawa still the coldest.
+lowest temperature always happen on 5am and highest is around 2-3pm.
+
+# Electricity supply and consumption change over temperature in three cities
+```{r, warning = FALSE, message = FALSE, fig.height=6,fig.width=10}
+temp_hour2 <- temp_data  %>%pivot_longer(cols = c('niagara', 'ottawa', 'toronto'), names_to = 'city', values_to = 'temp') %>% select(month_year, city, temp)%>% drop_na()%>% group_by(city, month_year) %>% summarise(mean_temp = mean(temp))
+
+demand_temp <- left_join(demand_month,temp_hour2,by = c("city"="city","Time"="month_year"))
+
+demand_temp %>%
+ggplot(aes( x = mean_temp,y = demand, colour = city,group=city))+
+  scale_y_continuous(labels = comma) +
+geom_line(aes(color=city)) +
+geom_point(size=2) +
+geom_smooth(method = "glm")+
+theme_minimal() +
+labs(
+x = 'Temp (C)',
+ y = 'Power demand(MW)',
+ colour = 'city' )
+```
+
+Both positive and negative correlations exist in case of Toronto. A negative correlation may be shown when the temperature is below 10 degrees, whereas a positive correlation can be seen when the temperature is above 10 degrees. The combination results in a substantial surge in electricity demand as the temperature rises over 20, as the need for air conditioning increases in homes, workplaces, and malls, even though Toronto's winter is not very frigid and its summer is quite humid. In addition, there are more companies that have high electricity consumption and a higher population in this city than in the other two.  
+
+Up until the temperature exceeds 20 degrees, there is a moderate negative correlation in the Ottawa region. The graph also shows that, in comparison to the other two cities, Ottawa experiences the coldest winters, which results in higher power consumption as a result of increased heater usage. Yet, despite being the coldest, the demand for electricity is lower than in Toronto because of the lower population and high tourism there.  
+
+Although having less severe winters than Ottawa, the Niagara region has a tendency that is nearly identical. Also, during the summer, temperatures rise in all cities, which raises the need for electricity. The graph also shows that the summers are not as hot as they are in Toronto, with the peak temperature being approximately 25 degrees.
+
+# Conclusion
+
+If you want to be more environmental friendly, use electricity before 10am or after 9pm.
+
+If you have to, 12pm-2pm is the best choice.
+
+If you want to save money, try to go between 1am and 6am
+
+If you have to, 1pm-4pm is the best choice
+
+# Future work
+
+Global Adjustment
+
+regression on price,demand,weather
+
+some extreme weather conditions
+
+benford analysis
+
+# Appendices
+
+<details>
+
+<summary>References</summary>
+
+
+1. https://www.modb.pro/db/451211
+2. https://zhuanlan.zhihu.com/p/148191291
+
+
+</details>
+
+<details>
+
+<summary>SessionInfo</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>
+
